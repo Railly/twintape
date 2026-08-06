@@ -1,0 +1,38 @@
+.{
+    .id = "dev.native_sdk.twintape",
+    .name = "twintape",
+    .display_name = "Twintape",
+    .description = "Minimal meeting recorder skeleton: menu-bar app with a recording overlay border.",
+    .version = "0.1.0",
+    .icons = .{"assets/icon.png"},
+    .platforms = .{"macos"},
+    .permissions = .{ "view", "command" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "tray" },
+    .shell = .{
+        .windows = .{
+            .{
+                .label = "main",
+                .title = "Twintape",
+                .width = 320,
+                .height = 190,
+                .restore_state = false,
+                .restore_policy = "center_on_primary",
+                // Menu-bar-app shape: the red close button hides the
+                // window instead of quitting; the app keeps running
+                // behind its status item. See docs/tray#the-menu-bar-app-lifecycle.
+                .close_policy = "hide",
+                .views = .{
+                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "Twintape status", .accessibility_label = "Twintape status", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
+                },
+            },
+        },
+    },
+    .security = .{
+        .navigation = .{
+            .allowed_origins = .{ "zero://app", "zero://inline" },
+            .external_links = .{ .action = "deny" },
+        },
+    },
+    .web_engine = "system",
+    .cef = .{ .dir = "third_party/cef/macos", .auto_install = false },
+}
