@@ -15,5 +15,11 @@ if [ ! -x "$FORK_BIN" ]; then
   (cd "$FORK_ROOT" && zig build cli)
 fi
 
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ $# -eq 0 ]; then
+  set -- dev "$REPO_ROOT"
+fi
+
 export NATIVE_SDK_PATH="$FORK_ROOT"
 exec "$FORK_BIN" "$@"
