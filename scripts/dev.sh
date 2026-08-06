@@ -4,10 +4,13 @@ set -euo pipefail
 # Runs twintape against the vercel-labs/native fork's `native` CLI
 # (built locally from source) instead of the globally installed 0.8.0,
 # because global_hotkeys (app.zon's `.global_hotkeys`, Event.global_hotkey)
-# only exists on the fork's recorder-sdk branch and has not shipped to
-# @native-sdk/cli yet.
+# AND audio capture (fx.audioCapture, Event.audio_capture) only exist on
+# the fork's recorder-sdk branch and have not shipped to @native-sdk/cli
+# yet. The default points at the recorder-sdk worktree, where both
+# features live merged together - the old native-hotkeys worktree has
+# the hotkey half only, so twintape no longer builds against it.
 
-FORK_ROOT="${NATIVE_FORK_ROOT:-/Users/raillyhugo/Programming/vercel-labs/native-hotkeys}"
+FORK_ROOT="${NATIVE_FORK_ROOT:-/Users/raillyhugo/Programming/vercel-labs/native-recorder-sdk}"
 FORK_BIN="$FORK_ROOT/zig-out/bin/native"
 
 if [ ! -x "$FORK_BIN" ]; then

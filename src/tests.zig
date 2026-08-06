@@ -173,6 +173,140 @@ test "a global hotkey with an unrelated id is ignored, not routed to toggle_reco
     try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
 }
 
+// ------------------------------------------------------- V3 audio capture
+
+test "toggling to recording fires a capture with both session track paths" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try testing.expectEqual(main.RecordingState.recording, app_state.model.state);
+
+    // The capture really was requested, against the two paths the model
+    // derived - not a recording state with no capture behind it.
+    const request = app_state.effects.audioCaptureRequest().?;
+    try testing.expectEqual(main.capture_key, request.key);
+    try testing.expectEqualStrings(app_state.model.micPath(), request.mic_path);
+    try testing.expectEqualStrings(app_state.model.systemPath(), request.system_path);
+
+    // Both tracks live inside the one session directory, and they are
+    // two different files (a shared path is a rejection, see
+    // docs/audio-capture).
+    const dir = app_state.model.sessionDir();
+    try testing.expect(dir.len > 0);
+    try testing.expect(std.mem.startsWith(u8, request.mic_path, dir));
+    try testing.expect(std.mem.startsWith(u8, request.system_path, dir));
+    try testing.expect(std.mem.endsWith(u8, request.mic_path, "/mic.wav"));
+    try testing.expect(std.mem.endsWith(u8, request.system_path, "/system.wav"));
+    try testing.expect(!std.mem.eql(u8, request.mic_path, request.system_path));
+}
+
+test "toggling back to idle stops the capture" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try testing.expect(app_state.effects.audioCaptureRequest() != null);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
+    // The stop released the channel: no capture is occupying it.
+    try testing.expect(!app_state.effects.audioCaptureSnapshot().active);
+}
+
+test "a failed capture returns the model to idle instead of a false recording" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try testing.expectEqual(main.RecordingState.recording, app_state.model.state);
+
+    // The shape a TCC refusal takes: asynchronous, after the request
+    // was accepted (see docs/audio-capture#permissions).
+    try harness.runtime.dispatchPlatformEvent(app, .{ .audio_capture = .{
+        .key = main.capture_key,
+        .kind = .failed,
+        .reason = .permission_denied,
+    } });
+
+    try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
+    try testing.expectEqual(main.CaptureFault.permission_denied, app_state.model.fault);
+    try testing.expect(!app_state.model.capture_started);
+
+    // The overlay border must not outlive the capture: a failure that
+    // left the border up would claim a recording that is not happening.
+    var scratch: TwintapeApp.WindowsScratch = undefined;
+    try testing.expectEqual(@as(usize, 0), main.windows(&app_state.model, &scratch).len);
+
+    // And the menu bar says so rather than showing a clean "twintape".
+    var item_scratch: TwintapeApp.StatusItemScratch = undefined;
+    const state = main.statusItem(&app_state.model, &item_scratch);
+    try testing.expect(std.mem.indexOf(u8, state.title, "permiso") != null);
+}
+
+test "a started event marks the capture live and stopped records the totals" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try testing.expect(!app_state.model.capture_started);
+
+    // `.started` means both tracks are really recording, not that the
+    // request was accepted.
+    try harness.runtime.dispatchPlatformEvent(app, .{ .audio_capture = .{
+        .key = main.capture_key,
+        .kind = .started,
+    } });
+    try testing.expect(app_state.model.capture_started);
+    try testing.expectEqual(main.RecordingState.recording, app_state.model.state);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .audio_capture = .{
+        .key = main.capture_key,
+        .kind = .stopped,
+        .bytes_written = 768_000,
+        .duration_ms = 8_000,
+    } });
+    try testing.expect(!app_state.model.capture_started);
+    try testing.expectEqual(@as(u64, 768_000), app_state.model.last_bytes_written);
+    try testing.expectEqual(@as(u64, 8_000), app_state.model.last_duration_ms);
+}
+
+test "the session stamp formats the SDK clock reading, not the host clock" {
+    // 2026-08-06T12:34:56Z with the offset pinned to UTC, so the
+    // assertion does not move with the machine's timezone.
+    var buffer: [32]u8 = undefined;
+    const stamp = main.formatSessionStamp(&buffer, 1_785_933_296_000);
+    try testing.expectEqual(@as(usize, 17), stamp.len);
+    try testing.expectEqual(@as(u8, '-'), stamp[4]);
+    try testing.expectEqual(@as(u8, '-'), stamp[7]);
+    try testing.expectEqual(@as(u8, '-'), stamp[10]);
+    // Every other character is a digit: this names a directory.
+    for (stamp, 0..) |c, i| {
+        if (i == 4 or i == 7 or i == 10) continue;
+        try testing.expect(std.ascii.isDigit(c));
+    }
+}
+
 test "tray Salir dispatches the graceful terminate" {
     const app_state = try createApp();
     defer testing.allocator.destroy(app_state);

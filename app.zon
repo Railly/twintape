@@ -6,8 +6,12 @@
     .version = "0.1.0",
     .icons = .{"assets/icon.png"},
     .platforms = .{"macos"},
-    .permissions = .{ "view", "command" },
-    .capabilities = .{ "native_views", "gpu_surfaces", "tray", "global_hotkeys" },
+    // "microphone" is the mic track's TCC declaration. The system track
+    // rides Screen Recording, which has no manifest form: macOS grants
+    // it only through System Settings, so a refusal arrives as a
+    // `failed` capture event (see docs/audio-capture#permissions).
+    .permissions = .{ "view", "command", "microphone" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "tray", "global_hotkeys", "audio_capture" },
     // System-wide toggle: fires while another app holds the keyboard, so
     // "start/stop recording" works without switching to twintape first
     // (the whole point of a background recorder). See docs/global-hotkeys.
