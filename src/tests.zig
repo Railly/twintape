@@ -114,6 +114,65 @@ test "tray Detener stops the model, cancels the timer, and drops the overlay dec
     try testing.expectEqual(@as(usize, 0), declared.len);
 }
 
+test "the toggle-rec global hotkey starts the model and declares the overlay window, unfocused-safe" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+
+    var app = app_state.app();
+    app.context = app_state;
+    app.event_fn = main.globalHotkeyEventFn;
+
+    try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
+
+    // Same event a global hotkey firing while twintape is unfocused
+    // produces: no window_id, delivered as a raw event (see
+    // docs/global-hotkeys) rather than through on_command.
+    try harness.runtime.dispatchPlatformEvent(app, .{ .global_hotkey = .{
+        .id = main.global_hotkey_toggle_id,
+        .key = "r",
+        .modifiers = .{ .primary = true, .shift = true },
+    } });
+    try testing.expectEqual(main.RecordingState.recording, app_state.model.state);
+    try testing.expectEqual(@as(usize, 1), app_state.effects.pendingTimerCount());
+
+    var scratch: TwintapeApp.WindowsScratch = undefined;
+    const declared = main.windows(&app_state.model, &scratch);
+    try testing.expectEqual(@as(usize, 1), declared.len);
+    try testing.expectEqualStrings(main.overlay_label, declared[0].label);
+
+    // Firing again toggles back off, same as the tray row.
+    try harness.runtime.dispatchPlatformEvent(app, .{ .global_hotkey = .{
+        .id = main.global_hotkey_toggle_id,
+        .key = "r",
+        .modifiers = .{ .primary = true, .shift = true },
+    } });
+    try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
+}
+
+test "a global hotkey with an unrelated id is ignored, not routed to toggle_recording" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+
+    var app = app_state.app();
+    app.context = app_state;
+    app.event_fn = main.globalHotkeyEventFn;
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .global_hotkey = .{
+        .id = "some.other.hotkey",
+        .key = "q",
+        .modifiers = .{ .primary = true, .shift = true },
+    } });
+    try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
+}
+
 test "tray Salir dispatches the graceful terminate" {
     const app_state = try createApp();
     defer testing.allocator.destroy(app_state);

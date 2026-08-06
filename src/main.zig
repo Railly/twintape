@@ -263,13 +263,42 @@ pub fn initialModel() Model {
     return .{};
 }
 
+pub const global_hotkey_toggle_id = "toggle-rec";
+
+/// `UiApp` has no `on_global_hotkey` hook (global hotkeys are not
+/// window-addressed, so they cannot ride the `on_command` seam the way
+/// shortcuts do - see docs/global-hotkeys). This thin wrapper around
+/// `TwintapeApp.app()` is the seam instead: it intercepts
+/// `Event.global_hotkey` and dispatches straight into the same
+/// `toggle_recording` Msg the tray's Grabar/Detener row already sends,
+/// then falls through to the inner `event_fn` for every other event so
+/// nothing else about `UiApp`'s dispatch changes.
+pub fn globalHotkeyEventFn(context: *anyopaque, runtime: *native_sdk.Runtime, event_value: native_sdk.Event) anyerror!void {
+    const app_state: *TwintapeApp = @ptrCast(@alignCast(context));
+    switch (event_value) {
+        .global_hotkey => |hotkey| {
+            if (std.mem.eql(u8, hotkey.id, global_hotkey_toggle_id)) {
+                try app_state.dispatch(runtime, app_state.canvas_window_id, .toggle_recording);
+                return;
+            }
+        },
+        else => {},
+    }
+    const inner = app_state.app();
+    try inner.event(runtime, event_value);
+}
+
 pub fn main(init: std.process.Init) !void {
     const app_state = try std.heap.page_allocator.create(TwintapeApp);
     defer std.heap.page_allocator.destroy(app_state);
     app_state.* = TwintapeApp.init(std.heap.page_allocator, .{}, options());
     defer app_state.deinit();
 
-    try runner.runWithOptions(app_state.app(), .{
+    var app = app_state.app();
+    app.context = app_state;
+    app.event_fn = globalHotkeyEventFn;
+
+    try runner.runWithOptions(app, .{
         .app_name = "twintape",
         .window_title = "Twintape",
         .bundle_id = "dev.native_sdk.twintape",

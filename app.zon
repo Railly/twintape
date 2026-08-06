@@ -7,7 +7,13 @@
     .icons = .{"assets/icon.png"},
     .platforms = .{"macos"},
     .permissions = .{ "view", "command" },
-    .capabilities = .{ "native_views", "gpu_surfaces", "tray" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "tray", "global_hotkeys" },
+    // System-wide toggle: fires while another app holds the keyboard, so
+    // "start/stop recording" works without switching to twintape first
+    // (the whole point of a background recorder). See docs/global-hotkeys.
+    .global_hotkeys = .{
+        .{ .id = "toggle-rec", .key = "r", .modifiers = .{ "primary", "shift" } },
+    },
     .shell = .{
         .windows = .{
             .{
