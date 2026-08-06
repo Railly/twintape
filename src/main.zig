@@ -11,8 +11,9 @@
 //! chrome, just the skeleton.
 //!
 //! Known gap (see README): the SDK has no screen-bounds query, so the
-//! overlay's frame is a hardcoded oversized rect instead of the real
-//! primary display size.
+//! overlay's frame defaults to a hardcoded oversized rect. `dev.sh`
+//! works around it by measuring the real screen size and passing it in
+//! via TWINTAPE_SCREEN_W/H env vars (see loadOverlayGeometryFromEnv).
 
 const std = @import("std");
 const runner = @import("runner");
@@ -34,12 +35,33 @@ const window_width: f32 = 320;
 const window_height: f32 = 190;
 
 // No SDK API returns the real primary-display frame (see README gap
-// note), so the overlay is a hardcoded oversized rect anchored at the
-// origin - big enough to cover common displays, not a real fullscreen
-// frame.
-const overlay_width: f32 = 3000;
-const overlay_height: f32 = 2000;
-const border_thickness: f32 = 10;
+// note), so the overlay defaults to a hardcoded oversized rect anchored
+// at the origin. `dev.sh` measures the real screen size in points
+// (AppleScript `bounds of window of desktop`) and exports
+// TWINTAPE_SCREEN_W/TWINTAPE_SCREEN_H so the overlay actually matches
+// the display instead of overshooting it - this dies the day the SDK
+// exposes screen bounds directly.
+const default_overlay_width: f32 = 3000;
+const default_overlay_height: f32 = 2000;
+const default_border_thickness: f32 = 3;
+
+var overlay_width: f32 = default_overlay_width;
+var overlay_height: f32 = default_overlay_height;
+var border_thickness: f32 = default_border_thickness;
+
+fn parseEnvF32(environ_map: *const std.process.Environ.Map, key: []const u8) ?f32 {
+    const raw = environ_map.get(key) orelse return null;
+    return std.fmt.parseFloat(f32, raw) catch null;
+}
+
+/// Reads TWINTAPE_SCREEN_W/H and TWINTAPE_BORDER from `init.environ_map`
+/// (std.process.Init) into the module-level overlay geometry, falling
+/// back to the hardcoded defaults when unset or unparsable.
+pub fn loadOverlayGeometryFromEnv(environ_map: *const std.process.Environ.Map) void {
+    overlay_width = parseEnvF32(environ_map, "TWINTAPE_SCREEN_W") orelse default_overlay_width;
+    overlay_height = parseEnvF32(environ_map, "TWINTAPE_SCREEN_H") orelse default_overlay_height;
+    border_thickness = parseEnvF32(environ_map, "TWINTAPE_BORDER") orelse default_border_thickness;
+}
 
 pub const toggle_command = "app.toggle_recording";
 pub const quit_command = "app.quit";
@@ -167,11 +189,25 @@ pub fn view(ui: *AppUi, model: *const Model) AppUi.Node {
 /// at all, so the transparent window's alpha-zero clear shows through
 /// (docs/windows: `UiApp.WindowDescriptor` selects an alpha-zero canvas
 /// clear automatically for a transparent window).
+///
+/// `WidgetStyle.radius` is a single scalar applied to all four corners
+/// of ITS OWN widget (no per-corner control in this SDK version), so
+/// the top band cannot just get a radius - that would round its
+/// bottom-inner corners too, notching into the frame. Instead the top
+/// band splits into a straight middle strip plus two small rounded
+/// corner squares (radius = corner_size, a quarter circle) at each
+/// end; the left/right/bottom bands stay straight rows/columns, giving
+/// rounded top corners and sharp bottom corners as requested.
 pub fn overlayView(ui: *AppUi, model: *const Model, window_label_arg: []const u8) AppUi.Node {
     _ = model;
     _ = window_label_arg;
+    const corner_size = border_thickness * 4;
     return ui.column(.{ .gap = 0 }, .{
-        ui.row(.{ .height = border_thickness, .style_tokens = .{ .background = .destructive } }, .{}),
+        ui.row(.{ .height = corner_size, .gap = 0 }, .{
+            ui.column(.{ .width = corner_size, .height = corner_size, .style_tokens = .{ .background = .destructive }, .style = .{ .radius = corner_size } }, .{}),
+            ui.column(.{ .grow = 1, .height = border_thickness, .style_tokens = .{ .background = .destructive } }, .{}),
+            ui.column(.{ .width = corner_size, .height = corner_size, .style_tokens = .{ .background = .destructive }, .style = .{ .radius = corner_size } }, .{}),
+        }),
         ui.row(.{ .grow = 1, .gap = 0 }, .{
             ui.column(.{ .width = border_thickness, .style_tokens = .{ .background = .destructive } }, .{}),
             ui.spacer(1),
@@ -289,6 +325,8 @@ pub fn globalHotkeyEventFn(context: *anyopaque, runtime: *native_sdk.Runtime, ev
 }
 
 pub fn main(init: std.process.Init) !void {
+    loadOverlayGeometryFromEnv(init.environ_map);
+
     const app_state = try std.heap.page_allocator.create(TwintapeApp);
     defer std.heap.page_allocator.destroy(app_state);
     app_state.* = TwintapeApp.init(std.heap.page_allocator, .{}, options());
