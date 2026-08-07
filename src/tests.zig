@@ -420,7 +420,7 @@ test "buildTrxCommand writes the two-line transcribe command for both tracks" {
     );
 }
 
-test "stopping a recording opens the naming dialog, pre-loaded with the session timestamp" {
+test "stopping a recording opens the naming dialog with the session timestamp as placeholder" {
     const app_state = try createApp();
     defer testing.allocator.destroy(app_state);
     defer app_state.deinit();
@@ -440,7 +440,11 @@ test "stopping a recording opens the naming dialog, pre-loaded with the session 
 
     const naming = app_state.model.naming.?;
     const session_stamp = std.fs.path.basename(app_state.model.sessionDir());
-    try testing.expectEqualStrings(session_stamp, naming.field.text());
+    // The timestamp rides the PLACEHOLDER (hint), never the field's
+    // text: a prefilled autofocused text_field paints a glyphless
+    // full-selection bar (SDK render bug, see main.zig NamingState).
+    try testing.expectEqualStrings(session_stamp, naming.hint.text());
+    try testing.expectEqualStrings("", naming.field.text());
     try testing.expect(!naming.resolved);
 
     // The window is declared while naming is up, chromeless and

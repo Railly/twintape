@@ -411,6 +411,12 @@ pub const clipboard_command_buffer_bytes: usize = 2200;
 /// post-stop reader of them.
 pub const NamingState = struct {
     field: native_sdk.canvas.TextBuffer(naming_field_capacity) = .{},
+    /// The session timestamp, shown as the field's PLACEHOLDER rather
+    /// than as pre-loaded text: a text_field that mounts autofocused
+    /// WITH content paints a full-selection black bar over the glyphs
+    /// (SDK render bug, documented as an upstream issue candidate), so
+    /// the field starts empty and an empty submit keeps the timestamp.
+    hint: native_sdk.canvas.TextBuffer(naming_field_capacity) = .{},
     /// Set once Guardar/Omitir/Enter/Esc resolves the dialog, so the
     /// "Comando trx copiado" confirmation can hold the window up for
     /// `confirmation_hold_ms` before `windows()` drops it.
@@ -561,14 +567,14 @@ pub const clipboard_key: u64 = 1;
 /// window up after Guardar/Omitir/Enter/Esc resolves it.
 pub const naming_confirmation_hold_ms: u64 = 1500;
 
-/// Opens the naming dialog for the session that just stopped,
-/// pre-loading the field with the session directory's own basename
-/// (the bare timestamp - `sessionDirFor`'s stamp, nothing slugified
-/// yet). Called once, right after `stopAudioCapture` on the
-/// idle-bound Detener path.
+/// Opens the naming dialog for the session that just stopped. The
+/// session directory's basename (the bare timestamp) goes into the
+/// field's PLACEHOLDER, not its text - see `NamingState.hint` for the
+/// SDK render bug this sidesteps. Called once, right after
+/// `stopAudioCapture` on the idle-bound Detener path.
 fn openNamingDialog(model: *Model) void {
     var naming = NamingState{};
-    naming.field.set(std.fs.path.basename(model.sessionDir()));
+    naming.hint.set(std.fs.path.basename(model.sessionDir()));
     model.naming = naming;
 }
 
@@ -874,6 +880,7 @@ fn namingContent(ui: *AppUi, model: *const Model) AppUi.Node {
             .width = naming_window_width - 32,
             .height = 32,
             .text = naming.field.text(),
+            .placeholder = naming.hint.text(),
             .autofocus = true,
             .on_input = AppUi.inputMsg(.naming_field_edit),
             .on_submit = .naming_save,
