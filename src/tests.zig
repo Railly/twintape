@@ -121,15 +121,18 @@ test "the status item installs with Grabar/Abrir grabaciones/Salir" {
 
     try testing.expectEqual(@as(usize, 1), harness.null_platform.trayCreateCount());
     try testing.expectEqual(@as(usize, main.status_items.len), harness.null_platform.trayItems().len);
-    // Idle title is empty - the status item's icon (assets/tray-icon.png,
-    // the static status_item.icon_path) carries identity, not the title.
+    // Idle title is empty and the icon stays visible - the status
+    // item's icon (assets/tray-icon.png, the static
+    // status_item.icon_path) carries identity, not the title.
     try testing.expectEqualStrings("", harness.null_platform.lastTrayTitle());
+    try testing.expect(harness.null_platform.lastTrayIconVisible());
 
     var item_scratch: TwintapeApp.StatusItemScratch = undefined;
     const state = main.statusItem(&app_state.model, &item_scratch);
     try testing.expectEqualStrings("Grabar", state.items[0].label);
     try testing.expectEqualStrings("Abrir grabaciones", state.items[2].label);
     try testing.expectEqualStrings("Salir", state.items[4].label);
+    try testing.expect(state.icon_visible);
 }
 
 test "tray Grabar starts the model, the elapsed timer, and swaps the view to the border" {
@@ -151,6 +154,8 @@ test "tray Grabar starts the model, the elapsed timer, and swaps the view to the
     const request = app_state.effects.pendingTimerAt(0).?;
     try testing.expectEqual(main.elapsed_timer_key, request.key);
     try testing.expectEqual(@as(u64, 1000), request.interval_ms);
+    // Recording hides the icon - the menu bar shows only "● MM:SS".
+    try testing.expect(!harness.null_platform.lastTrayIconVisible());
 }
 
 test "tray Detener stops the model and cancels the timer" {
@@ -164,12 +169,15 @@ test "tray Detener stops the model and cancels the timer" {
 
     try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
     try testing.expectEqual(main.RecordingState.recording, app_state.model.state);
+    try testing.expect(!harness.null_platform.lastTrayIconVisible());
 
     // Toggling again lands on id 1 again (Grabar became Detener, same
     // slot) through the model-driven status item, not a second id.
     try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
     try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
     try testing.expectEqual(@as(usize, 0), app_state.effects.pendingTimerCount());
+    // Stop restores the icon.
+    try testing.expect(harness.null_platform.lastTrayIconVisible());
 }
 
 test "tray Abrir grabaciones spawns open against the session root" {
@@ -327,10 +335,12 @@ test "a failed capture returns the model to idle instead of a false recording" {
     var scratch: TwintapeApp.WindowsScratch = undefined;
     try testing.expectEqual(@as(usize, 0), main.windows(&app_state.model, &scratch).len);
 
-    // And the menu bar says so rather than showing a clean (empty) idle title.
+    // And the menu bar says so rather than showing a clean (empty) idle
+    // title - the icon stays visible too, same as plain idle.
     var item_scratch: TwintapeApp.StatusItemScratch = undefined;
     const state = main.statusItem(&app_state.model, &item_scratch);
     try testing.expect(std.mem.indexOf(u8, state.title, "permiso") != null);
+    try testing.expect(state.icon_visible);
 }
 
 test "a started event marks the capture live and stopped records the totals" {

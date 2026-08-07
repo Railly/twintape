@@ -71,24 +71,16 @@
 //!   false. Moot for `overlay` here (it is always at 0,0 - the whole
 //!   screen), but real for anything sized less than the full display
 //!   that a future `windows_fn` window might add.
-//! - A status item shows a template image
-//!   (`Options.status_item.icon_path`, `appkit_host.m`'s
-//!   `native_sdk_appkit_create_tray` sets `image.template = YES` and
-//!   `statusItem.button.image`) but only at install time - it is
-//!   PERMANENTLY fixed for the app's lifetime, because
-//!   `StatusItemState` (the per-rebuild `status_item_fn` return value)
-//!   carries `title` and `items` only, no icon field, and
-//!   `native_sdk_appkit_update_tray_title` patches `button.title` and
-//!   never touches `button.image` (confirmed in both docs/tray.mdx --
-//!   "The static status_item still provides the icon and tooltip" --
-//!   and that function's body). This app leans on that: one constant
-//!   icon (assets/tray-icon.png) is the identity, and the title is the
-//!   ONLY thing that changes - empty idle, a fault label, or "●
-//!   MM:SS" recording - so there is no red/recording icon variant.
-//!   Filed as an issue candidate: a `runtime.updateTrayIcon`/
-//!   `StatusItemState.icon_path` seam mirroring the title one, so a
-//!   live app COULD swap the icon itself (e.g. to a red variant)
-//!   instead of only ever changing the text beside it.
+//! - A status item's icon can now be shown or hidden per rebuild via
+//!   `StatusItemState.icon_visible` (mirrors the title seam: patches
+//!   `statusItem.button.image` in place, no re-create, no flicker; the
+//!   host caches the image from install so toggling never re-reads the
+//!   icon file). This app uses it: idle shows the constant icon
+//!   (assets/tray-icon.png) alone, recording hides it and shows only
+//!   "● MM:SS" so the menu bar reads as a plain live clock, and a
+//!   fault keeps the icon visible with its label beside it. The icon's
+//!   PIXELS are still fixed at install time (no runtime swap to a red
+//!   variant) - only its visibility is model-driven.
 
 const std = @import("std");
 const runner = @import("runner");
@@ -578,16 +570,14 @@ pub fn command(name: []const u8) ?Msg {
 }
 
 /// Model-driven status item: the line of state, the Grabar/Detener
-/// toggle, "Abrir grabaciones", and Salir. Idle carries no title (the
-/// icon alone is identity), a fault label replaces it if the last
-/// capture failed, and "MM:SS" takes over while recording so the menu
-/// bar itself is the always-visible indicator (the border overlay is
-/// the screen-wide one) - the ONLY visible control surface this app
-/// has (see file doc).
+/// toggle, "Abrir grabaciones", and Salir. Idle shows the icon alone
+/// (no title). Recording hides the icon and shows only "● MM:SS" - the
+/// menu bar itself is the always-visible indicator (the border overlay
+/// is the screen-wide one) - the ONLY visible control surface this app
+/// has (see file doc). A fault keeps the icon visible and adds its
+/// label so a failed capture never looks like a clean stop.
 pub fn statusItem(model: *const Model, scratch: *TwintapeApp.StatusItemScratch) TwintapeApp.StatusItemState {
     const title = switch (model.state) {
-        // A fault outranks the plain idle (empty) title: a capture
-        // that failed must not look like a clean stop.
         .idle => std.fmt.bufPrint(&scratch.title_buffer, "{s}", .{model.fault.label()}) catch "",
         .recording => blk: {
             const parts = model.elapsedParts();
@@ -602,7 +592,7 @@ pub fn statusItem(model: *const Model, scratch: *TwintapeApp.StatusItemScratch) 
     scratch.items[2] = .{ .id = 2, .label = "Abrir grabaciones", .command = open_recordings_command };
     scratch.items[3] = .{ .separator = true };
     scratch.items[4] = .{ .id = 3, .label = "Salir", .command = quit_command };
-    return .{ .title = title, .items = scratch.items[0..5] };
+    return .{ .title = title, .icon_visible = model.state != .recording, .items = scratch.items[0..5] };
 }
 
 pub const open_recordings_command = "app.open_recordings";
