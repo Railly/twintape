@@ -21,34 +21,27 @@
     .shell = .{
         .windows = .{
             .{
-                // The pill itself (see src/main.zig's file doc). x/y
-                // are a HARDCODED guess (1512x982, the 14" MacBook Pro
-                // default in points), not computed: `native dev`
-                // resolves the startup window's create-time frame from
-                // THIS manifest, comptime, whenever app.zon declares
-                // `.windows` (app_runner/root.zig's `manifestWindow` -
-                // `RunOptions.default_frame`/`.restore_state` in
-                // src/main.zig's `runWithOptions` call are DEAD CODE on
-                // that path, only reached when app.zon declares no
-                // windows at all). There is no env-var equivalent for a
-                // manifest field the way TWINTAPE_SCREEN_W/H patches
-                // the border overlay's runtime geometry, so an external
-                // display or a different Mac's screen size ships this
-                // slightly off-anchor until the SDK grows either a
-                // manifest env-substitution or a runtime window-move
-                // call.
+                // The mandatory startup window, shrunk to an 8x8 sliver
+                // (see src/main.zig's file doc for why it is NOT merged
+                // with the recording border overlay: that merge made
+                // this window come up frontmost with opaque black
+                // content and real Cocoa chrome, a `makeMain`-only
+                // activation path `activate_on_show` cannot reach). The
+                // overlay itself is a separate `windows_fn`-declared
+                // window (main.zig's `windows()`), oversized and
+                // present only while recording.
                 .label = "main",
                 .title = "Twintape",
-                .width = 120,
+                .width = 8,
                 .height = 8,
-                .x = 696,
-                .y = 970,
+                .x = 0,
+                .y = 0,
                 .resizable = false,
-                .restore_state = true,
-                .restore_policy = "clamp_to_visible_screen",
+                .restore_state = false,
                 // Menu-bar-app shape: the red close button hides the
-                // window instead of quitting; the app keeps running
-                // behind its status item. See docs/tray#the-menu-bar-app-lifecycle.
+                // window instead of quitting (moot - this window shows
+                // no chrome, ever); the app keeps running behind its
+                // status item. See docs/tray#the-menu-bar-app-lifecycle.
                 .close_policy = "hide",
                 // Create-time-only overlay presentation: the manifest is
                 // authoritative for these (docs/app-zon), so they must
@@ -56,10 +49,10 @@
                 .titlebar = "chromeless",
                 .transparent = true,
                 .always_on_top = true,
-                .click_through = false,
+                .click_through = true,
                 .activate_on_show = false,
                 .views = .{
-                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "Twintape status", .accessibility_label = "Twintape status", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "premultiplied", .gpu_color_space = "srgb", .gpu_vsync = true },
+                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "Twintape", .accessibility_label = "Twintape", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "premultiplied", .gpu_color_space = "srgb", .gpu_vsync = true },
                 },
             },
         },

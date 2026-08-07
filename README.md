@@ -1,6 +1,6 @@
 # twintape
 
-Minimal meeting recorder for macOS. Two twin tapes, one per side of the conversation: your mic and the system audio, saved as separate mono WAVs so "you" and "them" stay attributable without any diarization model. One global shortcut to start and stop. A pill at the bottom of the screen and a border around it tell you when it is recording. No window, no account, no backend.
+Minimal meeting recorder for macOS. Two twin tapes, one per side of the conversation: your mic and the system audio, saved as separate mono WAVs so "you" and "them" stay attributable without any diarization model. One global shortcut to start and stop. A border around your screen tells you when it is recording. No window, no account, no backend.
 
 twintape only records. Transcription is composition, not a feature: pipe the tapes into [trx](https://github.com/crafter-station/trx) or any tool you prefer.
 
@@ -8,15 +8,13 @@ Built on [Native SDK](https://native-sdk.dev) as an open source dogfooding proje
 
 ## Usage
 
-**Start and stop**: press `cmd+shift+r` anywhere, even while another app has focus (it is a global hotkey, not a local shortcut). The pill and the status item both flip to the recording state.
+twintape is menu-bar-first: there is no window at all, ever. Everything happens through the menu bar status item.
 
-**The pill**: a thin gray strip anchored bottom-center of the screen, always on top. It turns red while recording. There is no titled window; the pill is the whole visible surface twintape shows on its own.
+**Start and stop**: press `cmd+shift+r` anywhere, even while another app has focus (it is a global hotkey, not a local shortcut), or use the "Grabar"/"Detener" row in the menu bar. The status item's title flips to `● MM:SS` while recording.
 
-**Hover the pill**: it expands into a small panel with the current status, elapsed time, a Grabar/Detener button, and an "Abrir grabaciones" button that opens the session folder in Finder. It collapses back to the pill shortly after the pointer goes quiet in that area (moving away, or just sitting still for a moment).
+**The border**: while recording, a thin red line traces the edge of the screen. It never intercepts clicks (it is click-through), so it never gets in the way of what you are doing. Idle, nothing is drawn anywhere on screen - not even an invisible window claiming clicks.
 
-**The border**: while recording, a thin red line traces the edge of the screen. It never intercepts clicks (it is click-through), so it never gets in the way of what you are doing.
-
-**Menu bar**: the status item mirrors the same Grabar/Detener toggle and shows the elapsed time in its title. Salir quits the app.
+**Menu bar**: click the "twintape" status item for Grabar/Detener, "Abrir grabaciones" (opens the current session folder in Finder), and Salir (quits the app). The title always shows the current state: a plain "twintape" idle, a fault label if the last capture failed, `● MM:SS` while recording.
 
 **Where sessions land**: every recording writes to its own timestamped folder under `~/Library/Application Support/twintape/<YYYY-MM-DD-HHMMSS>/`, with `mic.wav` and `system.wav` inside. "Abrir grabaciones" opens this folder directly.
 
