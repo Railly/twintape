@@ -121,10 +121,9 @@ test "the status item installs with Grabar/Abrir grabaciones/Salir" {
 
     try testing.expectEqual(@as(usize, 1), harness.null_platform.trayCreateCount());
     try testing.expectEqual(@as(usize, main.status_items.len), harness.null_platform.trayItems().len);
-    // Idle title is the single reel glyph - no status-item icon asset
-    // (see main.zig's file doc: an icon would sit permanently beside
-    // the title, showing two symbols while recording).
-    try testing.expectEqualStrings(main.idle_glyph, harness.null_platform.lastTrayTitle());
+    // Idle title is empty - the status item's icon (assets/tray-icon.png,
+    // the static status_item.icon_path) carries identity, not the title.
+    try testing.expectEqualStrings("", harness.null_platform.lastTrayTitle());
 
     var item_scratch: TwintapeApp.StatusItemScratch = undefined;
     const state = main.statusItem(&app_state.model, &item_scratch);

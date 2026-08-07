@@ -1,4 +1,4 @@
-<img src="assets/logo.svg" width="84" alt="twintape logo: two twin tape reels">
+<img src="assets/logo.svg" width="72" alt="twintape logo: two facing reels joined by two rungs">
 
 # twintape
 
@@ -16,7 +16,7 @@ twintape is menu-bar-first: there is no window at all, ever. Everything happens 
 
 **The border**: while recording, a thin red line traces the edge of the screen. It never intercepts clicks (it is click-through), so it never gets in the way of what you are doing. Idle, nothing is drawn anywhere on screen - not even an invisible window claiming clicks.
 
-**Menu bar**: click the "twintape" status item for Grabar/Detener, "Abrir grabaciones" (opens the current session folder in Finder), and Salir (quits the app). The title always shows the current state: a plain "twintape" idle, a fault label if the last capture failed, `● MM:SS` while recording.
+**Menu bar**: click the status item icon (two facing reels) for Grabar/Detener, "Abrir grabaciones" (opens the current session folder in Finder), and Salir (quits the app). The icon is the constant identity; its title shows the current state on top of it - nothing idle, a fault label if the last capture failed, `● MM:SS` while recording.
 
 **Where sessions land**: every recording writes to its own timestamped folder under `~/Library/Application Support/twintape/<YYYY-MM-DD-HHMMSS>/`, with `mic.wav` and `system.wav` inside. "Abrir grabaciones" opens this folder directly.
 

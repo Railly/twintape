@@ -38,14 +38,15 @@
 //! file back through V3), and the overlay's own activation moot
 //! either way (it never had a chrome-bearing makeMain window).
 //!
-//! Control lives ENTIRELY in the menu bar: the status item's title IS
-//! the icon (no image asset - see the SDK-gaps note below), always
-//! exactly one symbol, never two states at once - a single reel glyph
-//! (idle_glyph) idle, a fault label if the last capture failed, "●
-//! MM:SS" while recording, replacing the glyph entirely rather than
-//! sitting beside it. Its menu carries Grabar/Detener, "Abrir
-//! grabaciones" (open the session root in Finder), and Salir, and
-//! `cmd+shift+r` is the global hotkey twin of the Grabar/Detener row.
+//! Control lives ENTIRELY in the menu bar: a template icon
+//! (assets/tray-icon.png, two facing crescents/reels joined by two
+//! rungs - a DNA-ladder reading, same motif as assets/logo.svg) is
+//! the constant identity, and the status item's title layers state on
+//! top of it - empty idle (the icon alone), a fault label if the last
+//! capture failed, "● MM:SS" while recording. Its menu carries
+//! Grabar/Detener, "Abrir grabaciones" (open the session root in
+//! Finder), and Salir, and `cmd+shift+r` is the global hotkey twin of
+//! the Grabar/Detener row.
 //!
 //! Known SDK gaps (see README):
 //! - No screen-bounds query, so window geometry that must match the
@@ -70,24 +71,24 @@
 //!   false. Moot for `overlay` here (it is always at 0,0 - the whole
 //!   screen), but real for anything sized less than the full display
 //!   that a future `windows_fn` window might add.
-//! - A status item CAN show a template image
+//! - A status item shows a template image
 //!   (`Options.status_item.icon_path`, `appkit_host.m`'s
 //!   `native_sdk_appkit_create_tray` sets `image.template = YES` and
-//!   `statusItem.button.image`), but only at install time - it sits
-//!   PERMANENTLY beside whatever the title says, because
+//!   `statusItem.button.image`) but only at install time - it is
+//!   PERMANENTLY fixed for the app's lifetime, because
 //!   `StatusItemState` (the per-rebuild `status_item_fn` return value)
 //!   carries `title` and `items` only, no icon field, and
 //!   `native_sdk_appkit_update_tray_title` patches `button.title` and
 //!   never touches `button.image` (confirmed in both docs/tray.mdx --
 //!   "The static status_item still provides the icon and tooltip" --
-//!   and that function's body). An icon here would have sat next to
-//!   "● MM:SS" while recording, showing two symbols where the spec
-//!   wants exactly one. This app skips `icon_path` entirely and puts
-//!   the whole idle-vs-recording state in the title alone
-//!   (`idle_glyph` idle, "● MM:SS" recording, never both). Filed as an
-//!   issue candidate: a `runtime.updateTrayIcon`/`StatusItemState.
-//!   icon_path` seam mirroring the title one, so a live app COULD swap
-//!   icon and title together instead of choosing one channel.
+//!   and that function's body). This app leans on that: one constant
+//!   icon (assets/tray-icon.png) is the identity, and the title is the
+//!   ONLY thing that changes - empty idle, a fault label, or "●
+//!   MM:SS" recording - so there is no red/recording icon variant.
+//!   Filed as an issue candidate: a `runtime.updateTrayIcon`/
+//!   `StatusItemState.icon_path` seam mirroring the title one, so a
+//!   live app COULD swap the icon itself (e.g. to a red variant)
+//!   instead of only ever changing the text beside it.
 
 const std = @import("std");
 const runner = @import("runner");
@@ -270,11 +271,6 @@ pub const shell_scene: native_sdk.ShellConfig = .{ .windows = &shell_windows };
 
 pub const RecordingState = enum { idle, recording };
 
-/// The idle status-item title: one compact glyph (a single reel), not
-/// text, not two symbols - see the file doc's SDK-gaps note on why a
-/// status-item icon cannot ride alongside the model-driven title.
-pub const idle_glyph = "\u{25C9}"; // FISHEYE
-
 /// How the last capture ended, for the status item. `.none` while
 /// nothing has gone wrong; a failure parks here so the menu-bar title
 /// can say so instead of leaving a stale recording indicator up.
@@ -289,7 +285,10 @@ pub const CaptureFault = enum {
 
     pub fn label(fault: CaptureFault) []const u8 {
         return switch (fault) {
-            .none => idle_glyph,
+            // Empty: the status item's icon (assets/tray-icon.png, the
+            // static status_item.icon_path) carries idle identity on
+            // its own - no text needed beside it.
+            .none => "",
             .permission_denied => "sin permiso",
             .device_busy => "micro ocupado",
             .disk_full => "disco lleno",
@@ -579,13 +578,12 @@ pub fn command(name: []const u8) ?Msg {
 }
 
 /// Model-driven status item: the line of state, the Grabar/Detener
-/// toggle, "Abrir grabaciones", and Salir. `idle_glyph` is the idle
-/// title, a fault label replaces it if the last capture failed, and
-/// "MM:SS" takes over entirely while recording - always exactly one
-/// symbol, never the glyph next to the elapsed time - so the menu bar
-/// itself is the always-visible indicator (the border overlay is the
-/// screen-wide one) - the ONLY visible control surface this app has
-/// (see file doc).
+/// toggle, "Abrir grabaciones", and Salir. Idle carries no title (the
+/// icon alone is identity), a fault label replaces it if the last
+/// capture failed, and "MM:SS" takes over while recording so the menu
+/// bar itself is the always-visible indicator (the border overlay is
+/// the screen-wide one) - the ONLY visible control surface this app
+/// has (see file doc).
 pub fn statusItem(model: *const Model, scratch: *TwintapeApp.StatusItemScratch) TwintapeApp.StatusItemState {
     const title = switch (model.state) {
         // A fault outranks the plain idle (empty) title: a capture
@@ -628,13 +626,15 @@ pub fn options() TwintapeApp.Options {
         .windows_fn = windows,
         .window_view = windowView,
         .status_item = .{
-            // No icon: an icon set via Options.status_item.icon_path
-            // sits BESIDE the model-driven title (it cannot be swapped
-            // per-state - the SDK offers no update path, see the file
-            // doc's SDK-gaps note), which put a glyph, a recording dot,
-            // AND the elapsed time on screen together while recording.
-            // One glyph in the title covers idle instead, so the two
-            // states never render two symbols at once.
+            // Template image, set once (Options.status_item is static -
+            // see docs/tray#model-driven-title-and-menu: "The static
+            // status_item still provides the icon and tooltip"; there is
+            // no per-rebuild icon update in the SDK, see the file doc's
+            // SDK-gaps note). No static title: the icon alone carries
+            // idle identity, statusItem() below drives the live title
+            // (empty idle, "MM:SS" recording, a fault label on capture
+            // failure).
+            .icon_path = "assets/tray-icon@2x.png",
             .tooltip = "Twintape",
             .items = &status_items,
         },

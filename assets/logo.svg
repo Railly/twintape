@@ -1,9 +1,8 @@
-<svg width="96" height="48" viewBox="0 0 96 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- twintape: two twin reels, one per side of the conversation -->
-  <circle cx="26" cy="22" r="15" stroke="#808080" stroke-width="2.5"/>
-  <circle cx="70" cy="22" r="15" stroke="#808080" stroke-width="2.5"/>
-  <circle cx="26" cy="22" r="4.5" fill="#808080"/>
-  <circle cx="70" cy="22" r="4.5" fill="#808080"/>
-  <path d="M13 40 H83" stroke="#808080" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M26 37 V40 M70 37 V40" stroke="#808080" stroke-width="2.5" stroke-linecap="round"/>
+<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- twintape: two facing crescents (twin reels/strands, a DNA-ladder
+       reading) joined by two rungs - hairline, monochrome, no fill. -->
+  <polyline points="30.56,32.44 31.30,33.23 32.01,34.04 32.67,34.89 33.29,35.78 33.87,36.69 34.40,37.63 34.89,38.59 35.33,39.58 35.71,40.59 36.05,41.61 36.34,42.65 36.58,43.71 36.76,44.77 36.89,45.84 36.97,46.92 37.00,48.00 36.97,49.08 36.89,50.16 36.76,51.23 36.58,52.29 36.34,53.35 36.05,54.39 35.71,55.41 35.33,56.42 34.89,57.41 34.40,58.37 33.87,59.31 33.29,60.22 32.67,61.11 32.01,61.96 31.30,62.77 30.56,63.56" stroke="#6b6b6b" stroke-width="8.00" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <polyline points="65.44,63.56 64.70,62.77 63.99,61.96 63.33,61.11 62.71,60.22 62.13,59.31 61.60,58.37 61.11,57.41 60.67,56.42 60.29,55.41 59.95,54.39 59.66,53.35 59.42,52.29 59.24,51.23 59.11,50.16 59.03,49.08 59.00,48.00 59.03,46.92 59.11,45.84 59.24,44.77 59.42,43.71 59.66,42.65 59.95,41.61 60.29,40.59 60.67,39.58 61.11,38.59 61.60,37.63 62.13,36.69 62.71,35.78 63.33,34.89 63.99,34.04 64.70,33.23 65.44,32.44" stroke="#6b6b6b" stroke-width="8.00" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <line x1="39.00" y1="37.00" x2="57.00" y2="37.00" stroke="#6b6b6b" stroke-width="6.00" stroke-linecap="round"/>
+  <line x1="39.00" y1="59.00" x2="57.00" y2="59.00" stroke="#6b6b6b" stroke-width="6.00" stroke-linecap="round"/>
 </svg>
