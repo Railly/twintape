@@ -587,22 +587,28 @@ pub fn statusItem(model: *const Model, scratch: *TwintapeApp.StatusItemScratch) 
     scratch.items[0] = .{ .id = 1, .label = switch (model.state) {
         .idle => "Grabar",
         .recording => "Detener",
-    }, .command = toggle_command };
+    }, .command = toggle_command, .key = "r", .modifiers = .{ .primary = true, .shift = true } };
     scratch.items[1] = .{ .separator = true };
     scratch.items[2] = .{ .id = 2, .label = "Abrir grabaciones", .command = open_recordings_command };
     scratch.items[3] = .{ .separator = true };
-    scratch.items[4] = .{ .id = 3, .label = "Salir", .command = quit_command };
+    scratch.items[4] = .{ .id = 3, .label = "Salir", .command = quit_command, .key = "q", .modifiers = .{ .primary = true } };
     return .{ .title = title, .icon_visible = model.state != .recording, .items = scratch.items[0..5] };
 }
 
 pub const open_recordings_command = "app.open_recordings";
 
+// Static fallback (rendered before the model-driven statusItem() above
+// takes over on the first frame - see docs/tray#model-driven-title-icon-
+// visibility-and-menu). Mirrors its structure and shortcuts exactly: two
+// sections divided by separators, ⌘⇧R on the primary action, ⌘Q on Salir,
+// so a future "Grabar pantalla/ventana/area" row slots in as its own
+// section without touching the shape either declaration already has.
 pub const status_items = [_]native_sdk.TrayMenuItem{
-    .{ .id = 1, .label = "Grabar", .command = toggle_command },
+    .{ .id = 1, .label = "Grabar", .command = toggle_command, .key = "r", .modifiers = .{ .primary = true, .shift = true } },
     .{ .separator = true },
     .{ .id = 2, .label = "Abrir grabaciones", .command = open_recordings_command },
     .{ .separator = true },
-    .{ .id = 3, .label = "Salir", .command = quit_command },
+    .{ .id = 3, .label = "Salir", .command = quit_command, .key = "q", .modifiers = .{ .primary = true } },
 };
 
 pub fn options() TwintapeApp.Options {

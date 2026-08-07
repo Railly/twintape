@@ -133,6 +133,16 @@ test "the status item installs with Grabar/Abrir grabaciones/Salir" {
     try testing.expectEqualStrings("Abrir grabaciones", state.items[2].label);
     try testing.expectEqualStrings("Salir", state.items[4].label);
     try testing.expect(state.icon_visible);
+
+    // Grabar/Detener and Salir carry the same chord as their keyboard
+    // path (global_hotkey_toggle_id / Cmd+Q), rendered visibly at the
+    // trailing edge of the row (see docs/tray - key/modifiers).
+    try testing.expectEqualStrings("r", state.items[0].key);
+    try testing.expect(state.items[0].modifiers.primary);
+    try testing.expect(state.items[0].modifiers.shift);
+    try testing.expectEqualStrings("q", state.items[4].key);
+    try testing.expect(state.items[4].modifiers.primary);
+    try testing.expect(!state.items[4].modifiers.shift);
 }
 
 test "tray Grabar starts the model, the elapsed timer, and swaps the view to the border" {
