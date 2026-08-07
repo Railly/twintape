@@ -36,5 +36,8 @@ if [ -n "$SCREEN_BOUNDS" ]; then
   export TWINTAPE_SCREEN_H="$SCREEN_H"
 fi
 
+# Transcripts go to the vault inbox, WAVs never leave Application Support.
+export TWINTAPE_TRX_OUTPUT_DIR="${TWINTAPE_TRX_OUTPUT_DIR:-$HOME/hunter-brain/01_Inbox/recordings}"
+
 export NATIVE_SDK_PATH="$FORK_ROOT"
 exec "$FORK_BIN" "$@"

@@ -401,6 +401,242 @@ test "the session stamp formats the SDK clock reading, not the host clock" {
     }
 }
 
+// -------------------------------------------------------- V4.5 post-stop
+
+test "slugify lowercases, hyphenates, and strips non-alnum" {
+    var buffer: [64]u8 = undefined;
+    try testing.expectEqualStrings("standup-with-anthony", main.slugify(&buffer, "Standup with Anthony"));
+    try testing.expectEqualStrings("q3-planning", main.slugify(&buffer, "  Q3   Planning!! "));
+    try testing.expectEqualStrings("", main.slugify(&buffer, "   ---   "));
+    try testing.expectEqualStrings("", main.slugify(&buffer, ""));
+}
+
+test "buildTrxCommand writes the two-line transcribe command for both tracks" {
+    var buffer: [512]u8 = undefined;
+    const cmd = main.buildTrxCommand(&buffer, "/tmp/twintape/s/mic.wav", "/tmp/twintape/s/system.wav", "/tmp/out");
+    try testing.expectEqualStrings(
+        "trx transcribe \"/tmp/twintape/s/mic.wav\" --output-dir \"/tmp/out\" && trx transcribe \"/tmp/twintape/s/system.wav\" --output-dir \"/tmp/out\"",
+        cmd,
+    );
+}
+
+test "stopping a recording opens the naming dialog, pre-loaded with the session timestamp" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try testing.expectEqual(@as(?main.NamingState, null), app_state.model.naming);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Grabar
+    try testing.expectEqual(@as(?main.NamingState, null), app_state.model.naming);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Detener
+    try testing.expectEqual(main.RecordingState.idle, app_state.model.state);
+    try testing.expect(app_state.model.naming != null);
+
+    const naming = app_state.model.naming.?;
+    const session_stamp = std.fs.path.basename(app_state.model.sessionDir());
+    try testing.expectEqualStrings(session_stamp, naming.field.text());
+    try testing.expect(!naming.resolved);
+
+    // The window is declared while naming is up, chromeless and
+    // focusable (unlike the click-through overlay).
+    var scratch: TwintapeApp.WindowsScratch = undefined;
+    const declared = main.windows(&app_state.model, &scratch);
+    try testing.expectEqual(@as(usize, 1), declared.len);
+    try testing.expectEqualStrings(main.naming_label, declared[0].label);
+    try testing.expect(declared[0].activate_on_show);
+}
+
+test "Guardar slugifies the typed name and renames the session directory" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Grabar
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Detener
+
+    const original_dir_buffer = app_state.model.sessionDir();
+    var original_dir_owned: [640]u8 = undefined;
+    @memcpy(original_dir_owned[0..original_dir_buffer.len], original_dir_buffer);
+    const original_dir = original_dir_owned[0..original_dir_buffer.len];
+    const stamp = std.fs.path.basename(original_dir);
+
+    try app_state.dispatch(&harness.runtime, 1, .{ .naming_field_edit = .clear });
+    try app_state.dispatch(&harness.runtime, 1, .{ .naming_field_edit = .{ .insert_text = "Standup With Anthony" } });
+    try app_state.dispatch(&harness.runtime, 1, .naming_save);
+
+    try testing.expect(app_state.model.naming != null);
+    try testing.expect(app_state.model.naming.?.resolved);
+
+    var expected_buffer: [128]u8 = undefined;
+    const expected_name = try std.fmt.bufPrint(&expected_buffer, "{s}-standup-with-anthony", .{stamp});
+    try testing.expectEqualStrings(expected_name, app_state.model.lastSessionName());
+    try testing.expect(std.mem.endsWith(u8, app_state.model.sessionDir(), expected_name));
+    try testing.expect(!std.mem.eql(u8, app_state.model.sessionDir(), original_dir));
+
+    // The clipboard write fired with the RENAMED paths, not the
+    // pre-rename ones.
+    const request = app_state.effects.pendingClipboardAt(0).?;
+    try testing.expect(std.mem.indexOf(u8, request.text, expected_name) != null);
+    try testing.expect(std.mem.indexOf(u8, request.text, "trx transcribe") != null);
+    try testing.expect(std.mem.indexOf(u8, request.text, "mic.wav") != null);
+    try testing.expect(std.mem.indexOf(u8, request.text, "system.wav") != null);
+
+    // Auto-close timer armed for the "Comando trx copiado" hold.
+    try testing.expect(app_state.effects.pendingTimerCount() > 0);
+}
+
+test "Omitir (empty name) skips the rename but still copies the trx command for the bare timestamp" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Grabar
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Detener
+
+    const stamp_buffer = app_state.model.sessionDir();
+    var stamp_owned: [640]u8 = undefined;
+    @memcpy(stamp_owned[0..stamp_buffer.len], stamp_buffer);
+    const original_dir = stamp_owned[0..stamp_buffer.len];
+    const stamp = std.fs.path.basename(original_dir);
+
+    try app_state.dispatch(&harness.runtime, 1, .naming_skip);
+
+    try testing.expectEqualStrings(stamp, app_state.model.lastSessionName());
+    try testing.expectEqualStrings(original_dir, app_state.model.sessionDir());
+
+    const request = app_state.effects.pendingClipboardAt(0).?;
+    try testing.expect(std.mem.indexOf(u8, request.text, stamp) != null);
+}
+
+test "the naming-skip shortcut dispatches naming_skip through the app-level event seam" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+
+    var app = app_state.app();
+    app.context = app_state;
+    app.event_fn = main.globalHotkeyEventFn;
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Grabar
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Detener
+    try testing.expect(app_state.model.naming != null);
+    try testing.expect(!app_state.model.naming.?.resolved);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .shortcut = .{
+        .id = main.naming_skip_shortcut_id,
+        .key = "escape",
+        .window_id = 1,
+    } });
+
+    try testing.expect(app_state.model.naming.?.resolved);
+}
+
+test "the naming close tick drops the dialog window" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try app_state.dispatch(&harness.runtime, 1, .naming_skip);
+    try testing.expect(app_state.model.naming != null);
+
+    try app_state.dispatch(&harness.runtime, 1, .{ .naming_close_tick = .{ .key = main.naming_close_timer_key, .outcome = .fired } });
+    try testing.expectEqual(@as(?main.NamingState, null), app_state.model.naming);
+
+    var scratch: TwintapeApp.WindowsScratch = undefined;
+    try testing.expectEqual(@as(usize, 0), main.windows(&app_state.model, &scratch).len);
+}
+
+test "the tray shows Última grabación and Copiar comando trx only after a naming dialog has resolved" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    var item_scratch: TwintapeApp.StatusItemScratch = undefined;
+    var state = main.statusItem(&app_state.model, &item_scratch);
+    for (state.items) |item| {
+        try testing.expect(std.mem.indexOf(u8, item.label, "Última grabación") == null);
+        try testing.expect(!std.mem.eql(u8, item.command, main.copy_last_command_command));
+    }
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Grabar
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 }); // Detener
+    try app_state.dispatch(&harness.runtime, 1, .naming_skip);
+
+    state = main.statusItem(&app_state.model, &item_scratch);
+    var found_last_session = false;
+    var found_copy_command = false;
+    var last_session_enabled = true;
+    for (state.items) |item| {
+        if (std.mem.indexOf(u8, item.label, "Última grabación") != null) {
+            found_last_session = true;
+            last_session_enabled = item.enabled;
+        }
+        if (std.mem.eql(u8, item.command, main.copy_last_command_command)) found_copy_command = true;
+    }
+    try testing.expect(found_last_session);
+    try testing.expect(found_copy_command);
+    try testing.expect(!last_session_enabled);
+}
+
+test "Copiar comando trx re-copies the last resolved command" {
+    const app_state = try createApp();
+    defer testing.allocator.destroy(app_state);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+    const harness = try startedHarness(app_state);
+    defer harness.destroy(testing.allocator);
+    const app = app_state.app();
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try harness.runtime.dispatchPlatformEvent(app, .{ .tray_action = 1 });
+    try app_state.dispatch(&harness.runtime, 1, .naming_skip);
+
+    const first_request = app_state.effects.pendingClipboardAt(0).?;
+    var first_text_owned: [main.clipboard_command_buffer_bytes]u8 = undefined;
+    @memcpy(first_text_owned[0..first_request.text.len], first_request.text);
+    const first_text = first_text_owned[0..first_request.text.len];
+
+    // The naming-skip write shares `clipboard_key` with every clipboard
+    // effect in this app; the fake executor keeps a key occupied until
+    // its result is fed AND drained through a `.wake` pump (see the
+    // SDK's own effects_clipboard_tests.zig), so the first write must
+    // fully deliver before "Copiar comando trx" can open a second slot
+    // (real mode completes synchronously - see `effects.zig`'s
+    // `startClipboard`).
+    try app_state.effects.feedClipboardResult(main.clipboard_key, .ok, "");
+    try harness.runtime.dispatchPlatformEvent(app, .wake);
+    try app_state.dispatch(&harness.runtime, 1, .copy_last_command);
+    const second_request = app_state.effects.pendingClipboardAt(0).?;
+    try testing.expectEqualStrings(first_text, second_request.text);
+}
+
 test "tray Salir dispatches the graceful terminate" {
     const app_state = try createApp();
     defer testing.allocator.destroy(app_state);

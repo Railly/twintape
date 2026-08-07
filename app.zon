@@ -11,12 +11,22 @@
     // it only through System Settings, so a refusal arrives as a
     // `failed` capture event (see docs/audio-capture#permissions).
     .permissions = .{ "view", "command", "microphone" },
-    .capabilities = .{ "native_views", "gpu_surfaces", "tray", "global_hotkeys", "audio_capture" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "tray", "global_hotkeys", "audio_capture", "shortcuts", "clipboard" },
     // System-wide toggle: fires while another app holds the keyboard, so
     // "start/stop recording" works without switching to twintape first
     // (the whole point of a background recorder). See docs/global-hotkeys.
     .global_hotkeys = .{
         .{ .id = "toggle-rec", .key = "r", .modifiers = .{ "primary", "shift" } },
+    },
+    // Esc, scoped to twintape's OWN key window (unlike the hotkey
+    // above) - the naming dialog's Omitir path. A bare `escape` needs
+    // no modifier (only enter/tab/space/backspace do, see
+    // docs/keyboard-shortcuts#keys) and, being a `.shortcut` platform
+    // event rather than canvas keyboard input, it reaches
+    // `globalHotkeyEventFn` even while the naming field holds real
+    // focus - see src/main.zig's file doc.
+    .shortcuts = .{
+        .{ .id = "naming-skip", .key = "escape" },
     },
     .shell = .{
         .windows = .{

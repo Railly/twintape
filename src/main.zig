@@ -64,13 +64,43 @@
 //!   window's activation is NEVER manifest-controllable, so nobody
 //!   spends another session trying to merge a chrome-bearing surface
 //!   into it like this file did once.
-//! - A `windows_fn`-declared window's `x`/`y` is only honored on macOS
-//!   when `restore_state = true` - appkit_host.m's
-//!   `createWindowWithId:` builds `NSMakeRect(0, 0, w, h)` and cascades
-//!   the frame off the current key window whenever `restoreFrame` is
-//!   false. Moot for `overlay` here (it is always at 0,0 - the whole
-//!   screen), but real for anything sized less than the full display
-//!   that a future `windows_fn` window might add.
+//! - A `windows_fn`-declared window's `x`/`y` (`WindowDescriptor.x/y`)
+//!   is DEAD on macOS, unconditionally - `ui_app.zig`'s
+//!   `createWindowSlot` hardcodes `.restore_state = false` for every
+//!   `windows_fn` window (no app-level knob reaches it), and
+//!   appkit_host.m's `createWindowWithId:` only honors `x`/`y` when
+//!   `restoreFrame` is true; otherwise it builds `NSMakeRect(0, 0, w,
+//!   h)`, calls `[window center]`, then - because `windows_fn` windows
+//!   are ALSO always created with `makeMain: NO` (the C bridge's
+//!   `native_sdk_appkit_create_window` never threads a `makeMain`
+//!   param through at all) - immediately overwrites that centered
+//!   frame with a cascade off `NSApp.keyWindow ?: self.window`
+//!   whenever a reference window exists. `WindowRestorePolicy.
+//!   center_on_primary` looks like the fix but is a second dead end:
+//!   it is defined in `app_manifest`/`platform` types and threaded
+//!   into `ShellWindow.restore_policy`, but macOS's own
+//!   `native_sdk_appkit_create_window` extern (platform/macos/root.zig)
+//!   has no `restore_policy` parameter in its signature - the value
+//!   never crosses the FFI boundary into appkit_host.m, so it is inert
+//!   on this platform regardless of what an app sets it to. No
+//!   exposed primitive re-positions a window after creation either
+//!   (only view/webview frames get a `set*Frame` call - see
+//!   `platform/types.zig`'s `PlatformServices`). Moot for `overlay`
+//!   (it is always at 0,0 - the whole screen, so miscentering cannot
+//!   show), but real - and now hit - for `naming`: `self.window` (the
+//!   startup sliver, id 1, the app's one `makeMain: YES` window) is
+//!   itself always exactly screen-centered ([window center] DOES run
+//!   for it, since `makeMain` skips the cascade branch), so the
+//!   cascade's fixed `+24/-24` offset from the sliver's frame lands
+//!   `naming` a deterministic ~200pt right and ~90pt below true
+//!   center on a 1512x982pt display - visibly off-center, exactly
+//!   Hunter's report. Filed as an issue candidate: either honor `x`/
+//!   `y` for `windows_fn` windows independent of `restore_state`, or
+//!   make macOS's `create_window` actually read `restore_policy` and
+//!   implement `center_on_primary`, or expose a post-creation
+//!   set-window-frame call. Until one of those ships, no code fix
+//!   inside this app can center `naming` - do not spend another
+//!   session trying to solve it in `main.zig`.
 //! - A status item's icon can now be shown or hidden per rebuild via
 //!   `StatusItemState.icon_visible` (mirrors the title seam: patches
 //!   `statusItem.button.image` in place, no re-create, no flicker; the
@@ -81,6 +111,33 @@
 //!   fault keeps the icon visible with its label beside it. The icon's
 //!   PIXELS are still fixed at install time (no runtime swap to a red
 //!   variant) - only its visibility is model-driven.
+//!
+//! V4.5 adds the post-stop flow: a naming dialog, on-disk rename, and
+//! a copied `trx` command. Stopping opens `naming`, a THIRD
+//! `windows_fn`-declared window (present only while `model.naming !=
+//! null`, the same presence-is-visibility shape `overlay` already
+//! uses): a real `text_field` pre-loaded with the session's timestamp,
+//! Guardar/Omitir buttons, Enter submits, Esc skips. Both paths land
+//! on `finishNaming`, which slugifies the typed text (empty or
+//! whitespace-only counts as skipped), renames the session directory
+//! via `std.Io.Dir.renameAbsolute` when a name was given, and writes
+//! the two-line `trx transcribe` command for both tracks to the
+//! clipboard via `fx.writeClipboard` (see docs/effects#clipboard - the
+//! SAME effect the SDK's own clipboard-effect tests exercise against
+//! the null platform, so this app needed no new SDK capability). Esc
+//! reaches `finishNaming` through a manifest `Shortcut` (`app.zon`'s
+//! `.shortcuts`, `Event.shortcut` in `globalHotkeyEventFn`'s outer
+//! `event_fn`), not `Options.on_key`: `on_key` is a FALLBACK that a
+//! focused text-entry widget swallows before it ever fires
+//! (`canvas.isWidgetTextEntry`, see `ui_app.zig`'s `handleKeyboard`),
+//! but `.shortcut` is a distinct platform event the runtime dispatches
+//! straight through `dispatchCommand`/`dispatchEvent` - it never
+//! enters that widget-focus gate at all, so it fires even while the
+//! naming field holds real keyboard focus. The docs' key list allows a
+//! bare `escape` shortcut with no modifier (only `enter`/`tab`/
+//! `space`/`backspace` require one, to protect normal typing), which
+//! is what makes this the right seam instead of a second widget-level
+//! Esc handler.
 
 const std = @import("std");
 const runner = @import("runner");
@@ -97,6 +154,8 @@ pub const canvas_label = "main-canvas";
 pub const window_label = "main";
 pub const overlay_label = "overlay";
 pub const overlay_canvas_label = "overlay-canvas";
+pub const naming_label = "naming";
+pub const naming_canvas_label = "naming-canvas";
 
 // No SDK API returns the real primary-display frame (see file doc's
 // gap note), so window geometry that must match the display defaults
@@ -112,6 +171,19 @@ var overlay_width: f32 = default_overlay_width;
 var overlay_height: f32 = default_overlay_height;
 var border_thickness: f32 = default_border_thickness;
 
+// The naming dialog's fixed size. `x`/`y` on `WindowDescriptor` are
+// dead for `windows_fn` windows on macOS (see the file doc's SDK-gaps
+// note): AppKit's own `[window center]` runs first but is always
+// overwritten by a cascade off the startup sliver (the app's one
+// `makeMain` window, which - unlike `naming` - IS exactly centered),
+// landing this dialog visibly off true center with no code-level fix
+// available. Filed as an issue candidate in the gaps note; no
+// env-measured geometry can work around it either, since the
+// miscentering comes from AppKit's cascade math, not from this app's
+// guessed screen size.
+const naming_window_width: f32 = 380;
+const naming_window_height: f32 = 140;
+
 // ------------------------------------------------------- session storage
 //
 // V3 writes two WAV tracks per recording into a timestamped session
@@ -123,6 +195,11 @@ var border_thickness: f32 = default_border_thickness;
 // so no test touches the real Application Support tree.
 var process_io: ?std.Io = null;
 var home_dir: ?[]const u8 = null;
+var trx_output_root: ?[]const u8 = null;
+/// Formatting scratch for the tray's "Última grabación: <name>" label
+/// (see `statusItem`) - outside `StatusItemScratch` because that SDK
+/// type has no per-item label buffer, only the status title's.
+var last_session_label_buffer: [96]u8 = undefined;
 
 /// Where a session directory is rooted. Real runs put it under
 /// Application Support (the macOS convention for app-owned data the
@@ -213,6 +290,60 @@ fn parseEnvF32(environ_map: *const std.process.Environ.Map, key: []const u8) ?f3
     return std.fmt.parseFloat(f32, raw) catch null;
 }
 
+// -------------------------------------------------------------- naming
+
+/// Lowercase, spaces (and any other whitespace/punctuation run) to a
+/// single hyphen, `[a-z0-9-]` only, leading/trailing hyphens trimmed.
+/// Writes into `buffer` and returns the slice actually used - never
+/// more than `buffer.len` bytes, so a caller with a fixed-size stack
+/// buffer stays safe against an arbitrarily long typed name. An
+/// all-punctuation or empty `raw` slugifies to "" (the caller's cue to
+/// treat the save as a skip - see `finishNaming`).
+pub fn slugify(buffer: []u8, raw: []const u8) []const u8 {
+    var len: usize = 0;
+    var pending_hyphen = false;
+    for (raw) |c| {
+        if (len >= buffer.len) break;
+        const lower = std.ascii.toLower(c);
+        const is_alnum = (lower >= 'a' and lower <= 'z') or (lower >= '0' and lower <= '9');
+        if (is_alnum) {
+            if (pending_hyphen and len > 0) {
+                buffer[len] = '-';
+                len += 1;
+                if (len >= buffer.len) break;
+            }
+            pending_hyphen = false;
+            buffer[len] = lower;
+            len += 1;
+        } else {
+            pending_hyphen = true;
+        }
+    }
+    return buffer[0..len];
+}
+
+/// Where transcripts land for one named (or skipped) session:
+/// `$TWINTAPE_TRX_OUTPUT_DIR/<name>` when that env var is set (see
+/// `scripts/dev.sh`, which points it at the vault inbox by default),
+/// otherwise the session directory itself.
+pub fn trxOutputDirFor(buffer: []u8, session_dir: []const u8, name: []const u8) []const u8 {
+    const root = trx_output_root orelse return session_dir;
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ root, name }) catch session_dir;
+}
+
+/// The two-line `trx transcribe` command copied to the clipboard after
+/// a save or skip - one call per track, each writing into `out_dir`.
+/// `buffer` must be large enough for both paths and `out_dir`
+/// (`clipboard_command_buffer_bytes` on `Model`); returns "" on
+/// overflow rather than a truncated, half-written shell command.
+pub fn buildTrxCommand(buffer: []u8, mic_path: []const u8, system_path: []const u8, out_dir: []const u8) []const u8 {
+    return std.fmt.bufPrint(
+        buffer,
+        "trx transcribe \"{s}\" --output-dir \"{s}\" && trx transcribe \"{s}\" --output-dir \"{s}\"",
+        .{ mic_path, out_dir, system_path, out_dir },
+    ) catch "";
+}
+
 /// Reads TWINTAPE_SCREEN_W/H and TWINTAPE_BORDER from `init.environ_map`
 /// (std.process.Init) into the module-level overlay geometry, falling
 /// back to the hardcoded defaults when unset or unparsable.
@@ -220,6 +351,7 @@ pub fn loadOverlayGeometryFromEnv(environ_map: *const std.process.Environ.Map) v
     overlay_width = parseEnvF32(environ_map, "TWINTAPE_SCREEN_W") orelse default_overlay_width;
     overlay_height = parseEnvF32(environ_map, "TWINTAPE_SCREEN_H") orelse default_overlay_height;
     border_thickness = parseEnvF32(environ_map, "TWINTAPE_BORDER") orelse default_border_thickness;
+    trx_output_root = environ_map.get("TWINTAPE_TRX_OUTPUT_DIR");
 }
 
 pub const toggle_command = "app.toggle_recording";
@@ -262,6 +394,35 @@ pub const shell_scene: native_sdk.ShellConfig = .{ .windows = &shell_windows };
 // ------------------------------------------------------------------ model
 
 pub const RecordingState = enum { idle, recording };
+
+/// Max typed bytes in the naming field. A session name is a filename
+/// component, not prose - generous enough for a long meeting title,
+/// bounded so `TextBuffer` stays a fixed-size inline field.
+pub const naming_field_capacity: usize = 200;
+pub const naming_slug_capacity: usize = 200;
+/// `mic_path` + `system_path` + `out_dir`, each up to `session_dir`'s
+/// own 640-byte budget, plus the fixed command text around them.
+pub const clipboard_command_buffer_bytes: usize = 2200;
+
+/// Live while the naming dialog is up (`model.naming != null` is the
+/// window's presence check - see `windows()`). Holds only what the
+/// dialog itself needs; the session paths it acts on stay on `Model`
+/// (`session_dir`/`mic_path`/`system_path`), same as every other
+/// post-stop reader of them.
+pub const NamingState = struct {
+    field: native_sdk.canvas.TextBuffer(naming_field_capacity) = .{},
+    /// Set once Guardar/Omitir/Enter/Esc resolves the dialog, so the
+    /// "Comando trx copiado" confirmation can hold the window up for
+    /// `confirmation_hold_ms` before `windows()` drops it.
+    resolved: bool = false,
+};
+
+/// What the tray's "Última grabación" section reports. Populated once
+/// a naming dialog resolves (`finishNaming`); absent (`Model.
+/// last_session_name_len == 0`) until the first recording of this app
+/// session finishes naming, per the spec's "only appears if there is
+/// at least one recording in the current app session" rule.
+pub const last_session_name_capacity: usize = naming_field_capacity;
 
 /// How the last capture ended, for the status item. `.none` while
 /// nothing has gone wrong; a failure parks here so the menu-bar title
@@ -310,6 +471,20 @@ pub const Model = struct {
     last_bytes_written: u64 = 0,
     last_duration_ms: u64 = 0,
 
+    /// Non-null while the naming dialog is up - `windows()` reads this
+    /// for presence, same shape as `overlay`/`state == .recording`.
+    naming: ?NamingState = null,
+    /// The name (slug, or the bare timestamp when skipped) the tray's
+    /// "Última grabación" row shows and the "Copiar comando trx" item
+    /// re-copies. Empty until the first naming dialog resolves.
+    last_session_name_buffer: [last_session_name_capacity]u8 = undefined,
+    last_session_name_len: usize = 0,
+    /// The clipboard command last written, kept so "Copiar comando
+    /// trx" can re-copy it without recomputing paths already gone
+    /// (the dialog closed, `naming` is null again).
+    last_clipboard_command_buffer: [clipboard_command_buffer_bytes]u8 = undefined,
+    last_clipboard_command_len: usize = 0,
+
     pub fn sessionDir(model: *const Model) []const u8 {
         return model.session_dir_buffer[0..model.session_dir_len];
     }
@@ -318,6 +493,15 @@ pub const Model = struct {
     }
     pub fn systemPath(model: *const Model) []const u8 {
         return model.system_path_buffer[0..model.system_path_len];
+    }
+    pub fn lastSessionName(model: *const Model) []const u8 {
+        return model.last_session_name_buffer[0..model.last_session_name_len];
+    }
+    pub fn hasLastSession(model: *const Model) bool {
+        return model.last_session_name_len > 0;
+    }
+    pub fn lastClipboardCommand(model: *const Model) []const u8 {
+        return model.last_clipboard_command_buffer[0..model.last_clipboard_command_len];
     }
 
     pub fn elapsedMs(model: *const Model) i64 {
@@ -346,8 +530,14 @@ pub const Msg = union(enum) {
     capture_event: native_sdk.EffectAudioCapture,
     open_recordings,
     open_recordings_exit: native_sdk.EffectExit,
+    naming_field_edit: native_sdk.canvas.TextInputEvent,
+    naming_save,
+    naming_skip,
+    naming_close_tick: native_sdk.EffectTimer,
+    clipboard_written: native_sdk.EffectClipboardResult,
+    copy_last_command,
 
-    pub const view_unbound = .{ "tick", "capture_event", "open_recordings_exit" };
+    pub const view_unbound = .{ "tick", "capture_event", "open_recordings_exit", "naming_close_tick", "clipboard_written" };
 };
 
 const TwintapeApp = native_sdk.UiApp(Model, Msg);
@@ -360,6 +550,132 @@ pub const capture_key: u64 = 1;
 /// Spawn keys share the same namespace as capture/timer keys but are a
 /// separate effect kind, so 1 is free here too.
 pub const open_recordings_key: u64 = 1;
+/// A second timer key, distinct from `elapsed_timer_key` (both share
+/// the timer namespace, so they must differ from each other, not from
+/// the capture/spawn keys above).
+pub const naming_close_timer_key: u64 = 2;
+/// Clipboard keys are their own namespace (see docs/effects#clipboard),
+/// so this may share the number with every key above.
+pub const clipboard_key: u64 = 1;
+/// How long the "Comando trx copiado" confirmation holds the naming
+/// window up after Guardar/Omitir/Enter/Esc resolves it.
+pub const naming_confirmation_hold_ms: u64 = 1500;
+
+/// Opens the naming dialog for the session that just stopped,
+/// pre-loading the field with the session directory's own basename
+/// (the bare timestamp - `sessionDirFor`'s stamp, nothing slugified
+/// yet). Called once, right after `stopAudioCapture` on the
+/// idle-bound Detener path.
+fn openNamingDialog(model: *Model) void {
+    var naming = NamingState{};
+    naming.field.set(std.fs.path.basename(model.sessionDir()));
+    model.naming = naming;
+}
+
+/// Slugifies the naming field's current text and resolves the
+/// dialog: an empty/all-punctuation slug is a skip (the bare
+/// timestamp stays as the name, nothing renamed on disk); a non-empty
+/// slug renames the session directory to `<timestamp>-<slug>` via
+/// `std.Io.Dir.renameAbsolute` when a real `Io` is bound (tests leave
+/// it unbound and only exercise the naming/slug logic). Either path
+/// records the resolved name on `Model` (`last_session_name`, for the
+/// tray's "Última grabación" row) and fires the clipboard write.
+/// Shared by Guardar (Enter), Omitir (Esc), and the dialog's own
+/// on-submit - every resolution path funnels through here so the tray
+/// name and the clipboard command can never diverge from what the
+/// dialog actually did.
+fn finishNaming(model: *Model, fx: *Effects) void {
+    var naming = model.naming orelse return;
+    var slug_buffer: [naming_slug_capacity]u8 = undefined;
+    const slug = slugify(&slug_buffer, naming.field.text());
+
+    const timestamp = std.fs.path.basename(model.sessionDir());
+    var final_name_buffer: [last_session_name_capacity]u8 = undefined;
+    var final_name: []const u8 = timestamp;
+
+    if (slug.len > 0) {
+        final_name = std.fmt.bufPrint(&final_name_buffer, "{s}-{s}", .{ timestamp, slug }) catch timestamp;
+        renameSessionDir(model, final_name);
+    }
+
+    const copied_len = @min(final_name.len, last_session_name_capacity);
+    @memcpy(model.last_session_name_buffer[0..copied_len], final_name[0..copied_len]);
+    model.last_session_name_len = copied_len;
+
+    writeTrxClipboardCommand(model, fx, model.lastSessionName());
+
+    naming.resolved = true;
+    model.naming = naming;
+    fx.startTimer(.{
+        .key = naming_close_timer_key,
+        .interval_ms = naming_confirmation_hold_ms,
+        .mode = .one_shot,
+        .on_fire = Effects.timerMsg(.naming_close_tick),
+    });
+}
+
+/// Renames `model.sessionDir()` in place to `<root>/<final_name>`.
+/// The model's own path bookkeeping (`session_dir`/`mic_path`/
+/// `system_path`) always repoints to the new location - the same
+/// "compute the intended path regardless of `Io`" shape `sessionDirFor`
+/// uses for the create side of this pair - but the actual
+/// `renameAbsolute` syscall only runs when a real `Io` is bound. Tests
+/// leave `process_io` null, so they exercise the naming/slug/model
+/// logic without ever touching disk, same as every other test in this
+/// suite.
+fn renameSessionDir(model: *Model, final_name: []const u8) void {
+    var root_buffer: [512]u8 = undefined;
+    const root = sessionRoot(&root_buffer);
+    var new_path_buffer: [640]u8 = undefined;
+    const new_path = std.fmt.bufPrint(&new_path_buffer, "{s}/{s}", .{ root, final_name }) catch return;
+
+    if (process_io) |io| {
+        std.Io.Dir.renameAbsolute(model.sessionDir(), new_path, io) catch |err| {
+            twintape_log.warn("session rename failed: {s}", .{@errorName(err)});
+            return;
+        };
+    }
+
+    // The rename moved (or, unbound, would move) the directory the
+    // mic/system paths still point into: repoint them so a later
+    // "Copiar comando trx" (and the command this same call is about
+    // to write) names the NEW location, not the pre-rename one.
+    const new_session_dir = std.fmt.bufPrint(&model.session_dir_buffer, "{s}", .{new_path}) catch return;
+    model.session_dir_len = new_session_dir.len;
+    const new_mic_path: []const u8 = std.fmt.bufPrint(&model.mic_path_buffer, "{s}/mic.wav", .{new_path}) catch &.{};
+    model.mic_path_len = new_mic_path.len;
+    const new_system_path: []const u8 = std.fmt.bufPrint(&model.system_path_buffer, "{s}/system.wav", .{new_path}) catch &.{};
+    model.system_path_len = new_system_path.len;
+}
+
+/// Builds the two-line `trx transcribe` command for the session's
+/// current mic/system paths and writes it to the clipboard. `name` is
+/// the resolved session name (slug or bare timestamp), used only to
+/// build the output directory when `$TWINTAPE_TRX_OUTPUT_DIR` is set.
+/// The output directory is created on disk first when a real `Io` is
+/// bound: `trx transcribe --output-dir` does not mkdir for itself (a
+/// missing dir fails ffmpeg's write with ENOENT), and this app already
+/// creates the session directory the same way, so the copied command
+/// runs as-is rather than failing on a directory nobody made yet.
+fn writeTrxClipboardCommand(model: *Model, fx: *Effects, name: []const u8) void {
+    var out_dir_buffer: [640]u8 = undefined;
+    const out_dir = trxOutputDirFor(&out_dir_buffer, model.sessionDir(), name);
+
+    if (process_io) |io| {
+        std.Io.Dir.cwd().createDirPath(io, out_dir) catch |err| {
+            twintape_log.warn("trx output dir create failed: {s}", .{@errorName(err)});
+        };
+    }
+
+    const trx_command = buildTrxCommand(&model.last_clipboard_command_buffer, model.micPath(), model.systemPath(), out_dir);
+    model.last_clipboard_command_len = trx_command.len;
+
+    fx.writeClipboard(.{
+        .key = clipboard_key,
+        .text = trx_command,
+        .on_result = Effects.clipboardMsg(.clipboard_written),
+    });
+}
 
 pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
     switch (msg) {
@@ -414,6 +730,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                     // model goes idle now so the overlay drops on the
                     // keypress rather than a flush later.
                     fx.stopAudioCapture(capture_key);
+                    openNamingDialog(model);
                 },
             }
         },
@@ -474,6 +791,39 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 twintape_log.warn("open recordings folder failed: {s} (code {d})", .{ @tagName(exit.reason), exit.code });
             }
         },
+        .naming_field_edit => |edit| {
+            if (model.naming) |*naming| naming.field.apply(edit);
+        },
+        .naming_save => finishNaming(model, fx),
+        .naming_skip => {
+            // Omitir clears the field first: an empty field slugifies
+            // to "", which `finishNaming` treats as skip - the typed
+            // timestamp default never leaks into a name the user
+            // explicitly chose to drop.
+            if (model.naming) |*naming| naming.field.clear();
+            finishNaming(model, fx);
+        },
+        .naming_close_tick => |timer| {
+            if (timer.outcome != .fired) return;
+            model.naming = null;
+        },
+        // Fire-and-forget: the confirmation label ("Comando trx
+        // copiado") is shown from `naming.resolved` alone, not from
+        // this outcome, so a clipboard failure here does not block the
+        // dialog closing - it only means the trx command silently
+        // never made it to the pasteboard, which the log line is for.
+        .clipboard_written => |result| {
+            if (result.outcome != .ok) {
+                twintape_log.warn("clipboard write failed: {s}", .{@tagName(result.outcome)});
+            }
+        },
+        .copy_last_command => {
+            fx.writeClipboard(.{
+                .key = clipboard_key,
+                .text = model.lastClipboardCommand(),
+                .on_result = Effects.clipboardMsg(.clipboard_written),
+            });
+        },
     }
 }
 
@@ -493,9 +843,48 @@ pub fn view(ui: *AppUi, model: *const Model) AppUi.Node {
 /// `windows_fn`-declared window, so the label check is a guard against
 /// a future second entry silently falling through).
 pub fn windowView(ui: *AppUi, model: *const Model, window_label_arg: []const u8) AppUi.Node {
-    _ = model;
+    if (std.mem.eql(u8, window_label_arg, naming_label)) return namingContent(ui, model);
     std.debug.assert(std.mem.eql(u8, window_label_arg, overlay_label));
     return overlayContent(ui);
+}
+
+/// The naming dialog: title, the timestamp-prefilled name field
+/// (autofocus - a real editable text widget, see the file doc's
+/// Gate-0 note), and Guardar/Omitir. Enter on the field submits
+/// (`on_submit`); Esc is NOT wired here - it reaches `finishNaming`
+/// through the app-level `.shortcut` seam instead (see the file doc),
+/// because a focused text-entry widget swallows an unbound app-level
+/// key before any widget-local Esc binding this element could carry
+/// would even get the chance to. Once `naming.resolved` is true the
+/// field/buttons give way to the "Comando trx copiado" confirmation
+/// for `naming_confirmation_hold_ms` before `windows()` drops the
+/// window.
+fn namingContent(ui: *AppUi, model: *const Model) AppUi.Node {
+    const naming = model.naming orelse return ui.column(.{}, .{});
+    if (naming.resolved) {
+        return ui.column(.{ .padding = 16, .gap = 8, .grow = 1, .style_tokens = .{ .background = .background } }, .{
+            ui.spacer(1),
+            ui.text(.{ .semantics = .{ .label = "Comando trx copiado" } }, "Comando trx copiado"),
+            ui.spacer(1),
+        });
+    }
+    return ui.column(.{ .padding = 16, .gap = 8, .grow = 1, .style_tokens = .{ .background = .background } }, .{
+        ui.text(.{ .semantics = .{ .label = "Guardar grabación" } }, "Guardar grabación"),
+        ui.el(.text_field, .{
+            .width = naming_window_width - 32,
+            .height = 32,
+            .text = naming.field.text(),
+            .autofocus = true,
+            .on_input = AppUi.inputMsg(.naming_field_edit),
+            .on_submit = .naming_save,
+            .semantics = .{ .label = "Nombre de la grabación" },
+        }, .{}),
+        ui.row(.{ .gap = 8 }, .{
+            ui.spacer(1),
+            ui.button(.{ .variant = .ghost, .on_press = .naming_skip, .semantics = .{ .label = "Omitir" } }, "Omitir"),
+            ui.button(.{ .variant = .primary, .on_press = .naming_save, .semantics = .{ .label = "Guardar" } }, "Guardar"),
+        }),
+    });
 }
 
 /// The border: a red frame `border_thickness` points thick around the
@@ -557,6 +946,23 @@ pub fn windows(model: *const Model, scratch: *TwintapeApp.WindowsScratch) []cons
         count += 1;
     }
 
+    if (model.naming != null) {
+        scratch.windows[count] = .{
+            .label = naming_label,
+            .canvas_label = naming_canvas_label,
+            .title = "Guardar grabación",
+            .width = naming_window_width,
+            .height = naming_window_height,
+            .resizable = false,
+            .titlebar = .chromeless,
+            // A real dialog, unlike the click-through overlay: it must
+            // take focus (the whole point is typing a name), so this
+            // is the one window in the app that keeps the SDK's
+            // default `activate_on_show = true`.
+        };
+        count += 1;
+    }
+
     return scratch.windows[0..count];
 }
 
@@ -565,6 +971,7 @@ pub fn windows(model: *const Model, scratch: *TwintapeApp.WindowsScratch) []cons
 pub fn command(name: []const u8) ?Msg {
     if (std.mem.eql(u8, name, toggle_command)) return .toggle_recording;
     if (std.mem.eql(u8, name, open_recordings_command)) return .open_recordings;
+    if (std.mem.eql(u8, name, copy_last_command_command)) return .copy_last_command;
     if (std.mem.eql(u8, name, quit_command)) return .quit;
     return null;
 }
@@ -590,12 +997,34 @@ pub fn statusItem(model: *const Model, scratch: *TwintapeApp.StatusItemScratch) 
     }, .command = toggle_command, .key = "r", .modifiers = .{ .primary = true, .shift = true } };
     scratch.items[1] = .{ .separator = true };
     scratch.items[2] = .{ .id = 2, .label = "Abrir grabaciones", .command = open_recordings_command };
-    scratch.items[3] = .{ .separator = true };
-    scratch.items[4] = .{ .id = 3, .label = "Salir", .command = quit_command, .key = "q", .modifiers = .{ .primary = true } };
-    return .{ .title = title, .icon_visible = model.state != .recording, .items = scratch.items[0..5] };
+    var count: usize = 3;
+
+    // "Última grabación" only once a naming dialog has resolved at
+    // least once this app session (see `NamingState`/`finishNaming`) -
+    // before that there is nothing to name or re-copy.
+    if (model.hasLastSession()) {
+        scratch.items[count] = .{ .separator = true };
+        count += 1;
+        // `StatusItemScratch` (an SDK type) has only `title_buffer`, no
+        // slot for a menu item's label - this module-level buffer is
+        // the same "app-owned scratch, not a stack local" shape the
+        // status item's own formatting already follows (see
+        // `elapsedParts`'s doc comment), just outside the SDK struct.
+        scratch.items[count] = .{ .id = 4, .label = std.fmt.bufPrint(&last_session_label_buffer, "Última grabación: {s}", .{model.lastSessionName()}) catch "Última grabación", .enabled = false };
+        count += 1;
+        scratch.items[count] = .{ .id = 5, .label = "Copiar comando trx", .command = copy_last_command_command };
+        count += 1;
+    }
+
+    scratch.items[count] = .{ .separator = true };
+    count += 1;
+    scratch.items[count] = .{ .id = 3, .label = "Salir", .command = quit_command, .key = "q", .modifiers = .{ .primary = true } };
+    count += 1;
+    return .{ .title = title, .icon_visible = model.state != .recording, .items = scratch.items[0..count] };
 }
 
 pub const open_recordings_command = "app.open_recordings";
+pub const copy_last_command_command = "app.copy_last_command";
 
 // Static fallback (rendered before the model-driven statusItem() above
 // takes over on the first frame - see docs/tray#model-driven-title-icon-
@@ -645,6 +1074,7 @@ pub fn initialModel() Model {
 }
 
 pub const global_hotkey_toggle_id = "toggle-rec";
+pub const naming_skip_shortcut_id = "naming-skip";
 
 /// `UiApp` has no `on_global_hotkey` hook (global hotkeys are not
 /// window-addressed, so they cannot ride the `on_command` seam the way
@@ -660,6 +1090,18 @@ pub fn globalHotkeyEventFn(context: *anyopaque, runtime: *native_sdk.Runtime, ev
         .global_hotkey => |hotkey| {
             if (std.mem.eql(u8, hotkey.id, global_hotkey_toggle_id)) {
                 try app_state.dispatch(runtime, app_state.canvas_window_id, .toggle_recording);
+                return;
+            }
+        },
+        // Esc, scoped to the naming dialog's own window (see app.zon's
+        // `.shortcuts` and the file doc): only meaningful while
+        // `model.naming` is up, so an Esc that reaches here with no
+        // dialog open (there is no path to that today, but a future
+        // window could add one) is silently ignored rather than
+        // dispatched into a Msg the model would no-op on anyway.
+        .shortcut => |shortcut| {
+            if (std.mem.eql(u8, shortcut.id, naming_skip_shortcut_id) and app_state.model.naming != null) {
+                try app_state.dispatch(runtime, shortcut.window_id, .naming_skip);
                 return;
             }
         },
