@@ -415,7 +415,7 @@ test "buildTrxCommand writes the two-line transcribe command for both tracks" {
     var buffer: [512]u8 = undefined;
     const cmd = main.buildTrxCommand(&buffer, "/tmp/twintape/s/mic.wav", "/tmp/twintape/s/system.wav", "/tmp/out");
     try testing.expectEqualStrings(
-        "trx transcribe \"/tmp/twintape/s/mic.wav\" --output-dir \"/tmp/out\" && trx transcribe \"/tmp/twintape/s/system.wav\" --output-dir \"/tmp/out\"",
+        "trx transcribe \"/tmp/twintape/s/mic.wav\" --fields text,srt --output-dir \"/tmp/out\" && trx transcribe \"/tmp/twintape/s/system.wav\" --fields text,srt --output-dir \"/tmp/out\"",
         cmd,
     );
 }

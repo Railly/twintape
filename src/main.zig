@@ -339,7 +339,7 @@ pub fn trxOutputDirFor(buffer: []u8, session_dir: []const u8, name: []const u8) 
 pub fn buildTrxCommand(buffer: []u8, mic_path: []const u8, system_path: []const u8, out_dir: []const u8) []const u8 {
     return std.fmt.bufPrint(
         buffer,
-        "trx transcribe \"{s}\" --output-dir \"{s}\" && trx transcribe \"{s}\" --output-dir \"{s}\"",
+        "trx transcribe \"{s}\" --fields text,srt --output-dir \"{s}\" && trx transcribe \"{s}\" --fields text,srt --output-dir \"{s}\"",
         .{ mic_path, out_dir, system_path, out_dir },
     ) catch "";
 }
