@@ -21,18 +21,45 @@
     .shell = .{
         .windows = .{
             .{
+                // The pill itself (see src/main.zig's file doc). x/y
+                // are a HARDCODED guess (1512x982, the 14" MacBook Pro
+                // default in points), not computed: `native dev`
+                // resolves the startup window's create-time frame from
+                // THIS manifest, comptime, whenever app.zon declares
+                // `.windows` (app_runner/root.zig's `manifestWindow` -
+                // `RunOptions.default_frame`/`.restore_state` in
+                // src/main.zig's `runWithOptions` call are DEAD CODE on
+                // that path, only reached when app.zon declares no
+                // windows at all). There is no env-var equivalent for a
+                // manifest field the way TWINTAPE_SCREEN_W/H patches
+                // the border overlay's runtime geometry, so an external
+                // display or a different Mac's screen size ships this
+                // slightly off-anchor until the SDK grows either a
+                // manifest env-substitution or a runtime window-move
+                // call.
                 .label = "main",
                 .title = "Twintape",
-                .width = 320,
-                .height = 190,
-                .restore_state = false,
-                .restore_policy = "center_on_primary",
+                .width = 120,
+                .height = 8,
+                .x = 696,
+                .y = 970,
+                .resizable = false,
+                .restore_state = true,
+                .restore_policy = "clamp_to_visible_screen",
                 // Menu-bar-app shape: the red close button hides the
                 // window instead of quitting; the app keeps running
                 // behind its status item. See docs/tray#the-menu-bar-app-lifecycle.
                 .close_policy = "hide",
+                // Create-time-only overlay presentation: the manifest is
+                // authoritative for these (docs/app-zon), so they must
+                // match src/main.zig's shell_windows exactly.
+                .titlebar = "chromeless",
+                .transparent = true,
+                .always_on_top = true,
+                .click_through = false,
+                .activate_on_show = false,
                 .views = .{
-                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "Twintape status", .accessibility_label = "Twintape status", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
+                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "Twintape status", .accessibility_label = "Twintape status", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "premultiplied", .gpu_color_space = "srgb", .gpu_vsync = true },
                 },
             },
         },
