@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" width="84" alt="twintape logo: two twin tape reels">
+
 # twintape
 
 Minimal meeting recorder for macOS. Two twin tapes, one per side of the conversation: your mic and the system audio, saved as separate mono WAVs so "you" and "them" stay attributable without any diarization model. One global shortcut to start and stop. A border around your screen tells you when it is recording. No window, no account, no backend.
